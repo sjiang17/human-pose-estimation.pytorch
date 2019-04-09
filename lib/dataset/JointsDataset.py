@@ -48,6 +48,10 @@ class JointsDataset(Dataset):
         self.heatmap_size = cfg.MODEL.EXTRA.HEATMAP_SIZE
         self.sigma = cfg.MODEL.EXTRA.SIGMA
 
+        self.model_name = cfg.MODEL.NAME
+        if self.model_name == 'pose_resnet_reg':
+            self.std_inv = cfg.MODEL.EXTRA.STD_INV
+
         self.transform = transform
         self.db = []
 
@@ -100,25 +104,31 @@ class JointsDataset(Dataset):
                     joints, joints_vis, data_numpy.shape[1], self.flip_pairs)
                 c[0] = data_numpy.shape[1] - c[0] - 1
 
+        # print(data_numpy.shape) # original image shape
         trans = get_affine_transform(c, s, r, self.image_size)
         input = cv2.warpAffine(
             data_numpy,
             trans,
             (int(self.image_size[0]), int(self.image_size[1])),
             flags=cv2.INTER_LINEAR)
-
+        # print(input.shape) cropped and rotated shape 256 x 192
         if self.transform:
             input = self.transform(input)
+
+        # print(input.shape)
 
         for i in range(self.num_joints):
             if joints_vis[i, 0] > 0.0:
                 joints[i, 0:2] = affine_transform(joints[i, 0:2], trans)
 
-        target, target_weight = self.generate_target(joints, joints_vis)
+        if self.model_name == 'pose_resnet_reg':
+            target, target_weight = self.generate_reg_target(joints, joints_vis)
+        else:
+            target, target_weight = self.generate_target(joints, joints_vis)
 
         target = torch.from_numpy(target)
         target_weight = torch.from_numpy(target_weight)
-
+        # print(c, s, r, score)  # c is the center position of the person bbox in the original image coordinate
         meta = {
             'image': image_file,
             'filename': filename,
@@ -172,7 +182,7 @@ class JointsDataset(Dataset):
         :param joints_vis: [num_joints, 3]
         :return: target, target_weight(1: visible, 0: invisible)
         '''
-        target_weight = np.ones((self.num_joints, 1), dtype=np.float32)
+        target_weight = np.ones((self.num_joints, 1), dtype=np.float32) # 16, 1
         target_weight[:, 0] = joints_vis[:, 0]
 
         assert self.target_type == 'gaussian', \
@@ -182,17 +192,20 @@ class JointsDataset(Dataset):
             target = np.zeros((self.num_joints,
                                self.heatmap_size[1],
                                self.heatmap_size[0]),
-                              dtype=np.float32)
+                              dtype=np.float32)  # 16, 64, 48
 
-            tmp_size = self.sigma * 3
+            tmp_size = self.sigma * 3  # 2 x 3
 
             for joint_id in range(self.num_joints):
-                feat_stride = self.image_size / self.heatmap_size
+                # print('coord', joints[joint_id])
+                # print('vis', joints_vis[joint_id])
+                # print(type(joints[joint_id]))
+                feat_stride = self.image_size / self.heatmap_size  # 32, 32
                 mu_x = int(joints[joint_id][0] / feat_stride[0] + 0.5)
                 mu_y = int(joints[joint_id][1] / feat_stride[1] + 0.5)
                 # Check that any part of the gaussian is in-bounds
-                ul = [int(mu_x - tmp_size), int(mu_y - tmp_size)]
-                br = [int(mu_x + tmp_size + 1), int(mu_y + tmp_size + 1)]
+                ul = [int(mu_x - tmp_size), int(mu_y - tmp_size)]  # left and up of the gaussian kernel
+                br = [int(mu_x + tmp_size + 1), int(mu_y + tmp_size + 1)]  # right and down
                 if ul[0] >= self.heatmap_size[0] or ul[1] >= self.heatmap_size[1] \
                         or br[0] < 0 or br[1] < 0:
                     # If not, just return the image as is
@@ -200,7 +213,7 @@ class JointsDataset(Dataset):
                     continue
 
                 # # Generate gaussian
-                size = 2 * tmp_size + 1
+                size = 2 * tmp_size + 1  # 2*6 + 1 = 13
                 x = np.arange(0, size, 1, np.float32)
                 y = x[:, np.newaxis]
                 x0 = y0 = size // 2
@@ -218,5 +231,18 @@ class JointsDataset(Dataset):
                 if v > 0.5:
                     target[joint_id][img_y[0]:img_y[1], img_x[0]:img_x[1]] = \
                         g[g_y[0]:g_y[1], g_x[0]:g_x[1]]
+
+        return target, target_weight
+
+    def generate_reg_target(self, joints, joints_vis):
+        target_weight = np.ones((self.num_joints, 2), dtype=np.float32)
+        target_weight[:, :] = joints_vis[:, :2]
+
+        target = np.zeros((self.num_joints, 2), dtype=np.float32)
+        center = 0.5
+        w, h = self.image_size
+        std_inv = self.std_inv
+        for joint_id in range(self.num_joints):
+            target[joint_id] = (joints[joint_id][:2] / np.array([w, h]) - center) * np.array([std_inv, std_inv])
 
         return target, target_weight

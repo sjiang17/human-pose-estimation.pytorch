@@ -23,6 +23,7 @@ config.DATA_DIR = ''
 config.GPUS = '0'
 config.WORKERS = 4
 config.PRINT_FREQ = 20
+config.SUFFIX = ''
 
 # Cudnn related params
 config.CUDNN = edict()
@@ -41,6 +42,7 @@ POSE_RESNET.FINAL_CONV_KERNEL = 1
 POSE_RESNET.TARGET_TYPE = 'gaussian'
 POSE_RESNET.HEATMAP_SIZE = [64, 64]  # width * height, ex: 24 * 32
 POSE_RESNET.SIGMA = 2
+POSE_RESNET.STD_INV = 1.0
 
 MODEL_EXTRAS = {
     'pose_resnet': POSE_RESNET,
@@ -206,7 +208,7 @@ def get_model_name(cfg):
     name = cfg.MODEL.NAME
     full_name = cfg.MODEL.NAME
     extra = cfg.MODEL.EXTRA
-    if name in ['pose_resnet']:
+    if name in ['pose_resnet', 'pose_resnet_reg']:
         name = '{model}_{num_layers}'.format(
             model=name,
             num_layers=extra.NUM_LAYERS)

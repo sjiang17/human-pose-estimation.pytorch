@@ -16,8 +16,8 @@ import numpy as np
 import torch
 
 from core.config import get_model_name
-from core.evaluate import accuracy
-from core.inference import get_final_preds
+from core.evaluate import reg_accuracy
+from core.inference import get_reg_preds, get_final_preds_reg
 from utils.transforms import flip_back
 from utils.vis import save_debug_images
 from datetime import datetime
@@ -39,11 +39,37 @@ def train(config, train_loader, model, criterion, optimizer, epoch,
     for i, (input, target, target_weight, meta) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
+        DEBUG = False
+        if DEBUG:
+            import cv2
+            std_inv = np.array(config.MODEL.EXTRA.STD_INV)
+            print(input.size(), target.size())
+            im_tensor = input[0]
+            im_array = im_tensor * 0.225 + 0.25
+            im_array = im_array.mul(255).clamp(0, 255).byte().permute(1, 2, 0).cpu().numpy().copy()
+            print(im_array.shape)
+            target_i = target[0].numpy()
+            weight_i = target_weight[0].numpy()
+            fake_array = np.ones((256, 192, 3), dtype=np.uint8) * 255
+            for j in range(target_i.shape[0]):
+                print(target_i[j])
+                xt, yt = target_i[j] / np.array([std_inv, std_inv])
+                xk, yk = (xt + 0.5) * 192, (yt + 0.5) * 256
+                print(xk, yk, weight_i[j][0])
+                if weight_i[j][0]:
+                    print('drawing at', xk, yk)
+                    cv2.circle(im_array, (int(xk), int(yk)), 3, [255, 255, 255], -1)
+                    cv2.circle(fake_array, (int(xk), int(yk)), 3, [255, 0, 0], -1)
+
+            cv2.imshow('debug', im_array)
+            cv2.imshow('debug2', fake_array)
+            cv2.waitKey(0)
 
         # compute output
         output = model(input)
         target = target.cuda(non_blocking=True)
         target_weight = target_weight.cuda(non_blocking=True)
+        # print(output.size(), target.size(), target_weight.size())
 
         loss = criterion(output, target, target_weight)
 
@@ -55,8 +81,8 @@ def train(config, train_loader, model, criterion, optimizer, epoch,
         # measure accuracy and record loss
         losses.update(loss.item(), input.size(0))
 
-        _, avg_acc, cnt, pred = accuracy(output.detach().cpu().numpy(),
-                                         target.detach().cpu().numpy())
+        _, avg_acc, cnt, pred = reg_accuracy(output.detach().cpu().numpy(),
+                                         target.detach().cpu().numpy(), config)
         acc.update(avg_acc, cnt)
 
         # measure elapsed time
@@ -84,8 +110,8 @@ def train(config, train_loader, model, criterion, optimizer, epoch,
 
             if i % 50 == 0:
                 prefix = '{}_{}'.format(os.path.join(output_dir, 'train'), i)
-                save_debug_images(config, input, meta, target, pred*4, output,
-                              prefix)
+                save_debug_images(config, input, meta, target, pred, output,
+                                  prefix)
 
 
 def validate(config, val_loader, val_dataset, model, criterion, output_dir,
@@ -99,8 +125,8 @@ def validate(config, val_loader, val_dataset, model, criterion, output_dir,
 
     num_samples = len(val_dataset)
     all_preds = np.zeros((num_samples, config.MODEL.NUM_JOINTS, 3),
-                         dtype=np.float32)
-    all_boxes = np.zeros((num_samples, 6))
+                         dtype=np.float32) # 5000, 17, 3
+    all_boxes = np.zeros((num_samples, 6)) # 5000, 6
     image_path = []
     filenames = []
     imgnums = []
@@ -136,8 +162,8 @@ def validate(config, val_loader, val_dataset, model, criterion, output_dir,
             num_images = input.size(0)
             # measure accuracy and record loss
             losses.update(loss.item(), num_images)
-            _, avg_acc, cnt, pred = accuracy(output.cpu().numpy(),
-                                             target.cpu().numpy())
+            _, avg_acc, cnt, pred = reg_accuracy(output.cpu().numpy(),
+                                             target.cpu().numpy(), config)
 
             acc.update(avg_acc, cnt)
 
@@ -149,8 +175,8 @@ def validate(config, val_loader, val_dataset, model, criterion, output_dir,
             s = meta['scale'].numpy()
             score = meta['score'].numpy()
 
-            preds, maxvals = get_final_preds(
-                config, output.clone().cpu().numpy(), c, s)
+            preds = get_final_preds_reg(config, output.clone().cpu().numpy(), c, s) # n, 17, 2
+            maxvals = np.ones((preds.shape[0], preds.shape[1], 1), dtype=np.float32) # n, 17, 1
 
             all_preds[idx:idx + num_images, :, 0:2] = preds[:, :, 0:2]
             all_preds[idx:idx + num_images, :, 2:3] = maxvals
@@ -176,7 +202,7 @@ def validate(config, val_loader, val_dataset, model, criterion, output_dir,
                 logger.info(msg)
 
                 prefix = '{}_{}'.format(os.path.join(output_dir, 'val'), i)
-                save_debug_images(config, input, meta, target, pred*4, output,
+                save_debug_images(config, input, meta, target, pred, output,
                                   prefix)
 
         name_values, perf_indicator = val_dataset.evaluate(

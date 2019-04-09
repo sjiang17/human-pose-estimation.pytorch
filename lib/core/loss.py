@@ -36,3 +36,19 @@ class JointsMSELoss(nn.Module):
                 loss += 0.5 * self.criterion(heatmap_pred, heatmap_gt)
 
         return loss / num_joints
+
+class WeightedSmoothL1Loss(nn.Module):
+    def __init__(self):
+        super(WeightedSmoothL1Loss, self).__init__()
+        self.criterion = nn.SmoothL1Loss(reduction='mean')
+
+    def forward(self, output, target, target_weight):
+        batch_size = output.size(0)
+        num_joints = target.size(1)
+        output = output.reshape((batch_size, num_joints, -1))
+        loss = self.criterion(
+            target * target_weight,
+            output * target_weight
+        )
+
+        return loss

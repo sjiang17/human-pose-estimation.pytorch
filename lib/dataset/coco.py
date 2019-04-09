@@ -164,8 +164,8 @@ class COCODataset(JointsDataset):
             if max(obj['keypoints']) == 0:
                 continue
 
-            joints_3d = np.zeros((self.num_joints, 3), dtype=np.float)
-            joints_3d_vis = np.zeros((self.num_joints, 3), dtype=np.float)
+            joints_3d = np.zeros((self.num_joints, 3), dtype=np.float) # 16, 3
+            joints_3d_vis = np.zeros((self.num_joints, 3), dtype=np.float) # 16, 3
             for ipt in range(self.num_joints):
                 joints_3d[ipt, 0] = obj['keypoints'][ipt * 3 + 0]
                 joints_3d[ipt, 1] = obj['keypoints'][ipt * 3 + 1]
@@ -198,13 +198,13 @@ class COCODataset(JointsDataset):
         center = np.zeros((2), dtype=np.float32)
         center[0] = x + w * 0.5
         center[1] = y + h * 0.5
-
+        # aspect_ratio: width / height
         if w > self.aspect_ratio * h:
             h = w * 1.0 / self.aspect_ratio
         elif w < self.aspect_ratio * h:
             w = h * self.aspect_ratio
         scale = np.array(
-            [w * 1.0 / self.pixel_std, h * 1.0 / self.pixel_std],
+            [w * 1.0 / self.pixel_std, h * 1.0 / self.pixel_std], #  pixel_std = 200?
             dtype=np.float32)
         if center[0] != -1:
             scale = scale * 1.25
@@ -280,7 +280,7 @@ class COCODataset(JointsDataset):
 
         # person x (keypoints)
         _kpts = []
-        for idx, kpt in enumerate(preds):
+        for idx, kpt in enumerate(preds): # 5000, 17, 2
             _kpts.append({
                 'keypoints': kpt,
                 'center': all_boxes[idx][0:2],
@@ -290,7 +290,8 @@ class COCODataset(JointsDataset):
                 'image': int(img_path[idx][-16:-4])
             })
         # image x person x (keypoints)
-        kpts = defaultdict(list)
+        kpts = defaultdict(list) # a new dict length of 5000
+        # for each dict element in _kpts, append the dict to the element in kpts['image'], combine all bboxes of the same image
         for kpt in _kpts:
             kpts[kpt['image']].append(kpt)
 
